@@ -1,8 +1,6 @@
 package net.ckozak;
 
 import com.codahale.metrics.MetricRegistry;
-import com.google.common.base.MoreObjects;
-import com.google.common.collect.ComparisonChain;
 import com.google.common.primitives.Longs;
 import com.palantir.atlasdb.config.ImmutableAtlasDbConfig;
 import com.palantir.atlasdb.encoding.PtBytes;
@@ -18,7 +16,6 @@ import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 
-import java.util.Arrays;
 import java.util.Objects;
 
 @Measurement(iterations = 3, time = 10)
@@ -32,15 +29,15 @@ import java.util.Objects;
         "-XX:CompileThreshold=300",
         // Failure only occurs with AVX-512.
         "-XX:UseAVX=3",
-        "-XX:CompileCommand=compileonly,net.ckozak.Repro$OrderedRow::persistToBytes",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.encoding.PtBytes::toBytes",
+        "-XX:CompileCommand=compileonly,net.ckozak.Repro$Value::persistToBytes",
+        "-XX:CompileCommand=inline,com.google.common.primitives.Bytes::concat",
         "-XX:CompileCommand=inline,com.google.common.primitives.Longs::toByteArray",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeVarString",
+        "-XX:CompileCommand=inline,com.google.protobuf.CodedOutputStream::computeUInt64SizeNoTag",
+        "-XX:CompileCommand=inline,com.palantir.atlasdb.encoding.PtBytes::toBytes",
+        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::add",
         "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeSizedBytes",
         "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeVarLong",
-        "-XX:CompileCommand=inline,com.google.protobuf.CodedOutputStream::computeUInt64SizeNoTag",
-        "-XX:CompileCommand=inline,com.google.common.primitives.Bytes::concat",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::add",
+        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeVarString",
 })
 // The above line may be updated thusly:
 // }, jvm = "/path/to/jdk-21/bin/java")
@@ -50,54 +47,52 @@ public class Repro {
     public void attempt() {
         runAtlasInit();
         for (int i = 0; i < 10; i++) {
-            OrderedRow row = OrderedRow.of("name", i);
-            byte[] val = row.persistToBytes();
-            OrderedRow hydrated = OrderedRow.parse(val);
-            if (!row.equals(hydrated)) {
-                throw new RuntimeException("Expected " + row + " but found " + hydrated);
+            Value value = Value.of("name", i);
+            byte[] bytes = value.persistToBytes();
+            Value hydrated = Value.parse(bytes);
+            if (!value.equals(hydrated)) {
+                throw new RuntimeException("Expected " + value + " but found " + hydrated);
             }
         }
     }
 
-    public static final class OrderedRow implements Persistable {
-        private final long hashOfRowComponents;
-        private final String series;
+    public static final class Value implements Persistable {
+        private final long hash;
+        private final String name;
         private final long offset;
 
-        public static OrderedRow of(String series, long offset) {
-            long hashOfRowComponents = series.hashCode();
-            return new OrderedRow(hashOfRowComponents, series, offset);
+        public static Value of(String series, long offset) {
+            long hash = series.hashCode();
+            return new Value(hash, series, offset);
         }
 
-        private OrderedRow(long hashOfRowComponents, String series, long offset) {
-            this.hashOfRowComponents = hashOfRowComponents;
-            this.series = series;
+        private Value(long hash, String name, long offset) {
+            this.hash = hash;
+            this.name = name;
             this.offset = offset;
         }
 
         @Override
         public byte[] persistToBytes() {
-            byte[] hashOfRowComponentsBytes = Longs.toByteArray(Long.MIN_VALUE ^ hashOfRowComponents);
-            byte[] seriesBytes = EncodingUtils.encodeVarString(series);
+            byte[] hashBytes = Longs.toByteArray(Long.MIN_VALUE ^ hash);
+            byte[] seriesBytes = EncodingUtils.encodeVarString(name);
             byte[] offsetBytes = Longs.toByteArray(Long.MIN_VALUE ^ offset);
-            return com.google.common.primitives.Bytes.concat(hashOfRowComponentsBytes, seriesBytes, offsetBytes);
+            return com.google.common.primitives.Bytes.concat(hashBytes, seriesBytes, offsetBytes);
         }
 
-        static OrderedRow parse(byte[] __input) {
-            int __index = 0;
-            Long hashOfRowComponents = Long.MIN_VALUE ^ PtBytes.toLong(__input, __index);
-            __index += 8;
-            String series = EncodingUtils.decodeVarString(__input, __index);
-            __index += EncodingUtils.sizeOfVarString(series);
-            Long offset = Long.MIN_VALUE ^ PtBytes.toLong(__input, __index);
-            __index += 8;
-            return new OrderedRow(hashOfRowComponents, series, offset);
+        static Value parse(byte[] bytes) {
+            int index = 0;
+            long hash = Long.MIN_VALUE ^ PtBytes.toLong(bytes, index);
+            index += 8;
+            String series = EncodingUtils.decodeVarString(bytes, index);
+            index += EncodingUtils.sizeOfVarString(series);
+            long offset = Long.MIN_VALUE ^ PtBytes.toLong(bytes, index);
+            return new Value(hash, series, offset);
         }
 
         @Override
         public String toString() {
-            return "OrderedRow{hashOfRowComponents="
-                    + hashOfRowComponents + ", series=" + series + ", offset=" + offset +'}';
+            return "Value{hash=" + hash + ", name=" + name + ", offset=" + offset +'}';
         }
 
         @Override
@@ -105,37 +100,35 @@ public class Repro {
             if (this == obj) {
                 return true;
             }
-            if (obj == null) {
-                return false;
-            }
-            if (getClass() != obj.getClass()) {
-                return false;
-            }
-            OrderedRow other = (OrderedRow) obj;
-            return Objects.equals(hashOfRowComponents, other.hashOfRowComponents)
-                    && Objects.equals(series, other.series)
+            return obj instanceof Value other && Objects.equals(hash, other.hash)
+                    && Objects.equals(name, other.name)
                     && Objects.equals(offset, other.offset);
         }
 
         @Override
         public int hashCode() {
-            return Arrays.deepHashCode(new Object[] {hashOfRowComponents, series, offset});
+            return 31 * (31 * Long.hashCode(hash) + name.hashCode()) + Long.hashCode(offset);
         }
     }
 
     private static void runAtlasInit() {
         TransactionManagers.builder()
-                .config(ImmutableAtlasDbConfig.builder()
-                        .keyValueService(new InMemoryAtlasDbConfig())
-                        .backgroundScrubReadThreads(1)
-                        .backgroundScrubThreads(1)
-                        .collectThreadDumpOnTimestampServiceInit(false)
-                        .build())
-                .userAgent(UserAgent.of(UserAgent.Agent.of("unknown", "0.0.0")))
-                .globalMetricsRegistry(new MetricRegistry())
-                .globalTaggedMetricRegistry(new DefaultTaggedMetricRegistry())
+                .config(CONFIG)
+                .userAgent(USER_AGENT)
+                .globalMetricsRegistry(METRIC_REGISTRY)
+                .globalTaggedMetricRegistry(TAGGED_METRIC_REGISTRY)
                 .build()
                 .serializable()
                 .close();
     }
+
+    private static final DefaultTaggedMetricRegistry TAGGED_METRIC_REGISTRY = new DefaultTaggedMetricRegistry();
+    private static final MetricRegistry METRIC_REGISTRY = new MetricRegistry();
+    private static final UserAgent USER_AGENT = UserAgent.of(UserAgent.Agent.of("unknown", "0.0.0"));
+    private static final ImmutableAtlasDbConfig CONFIG = ImmutableAtlasDbConfig.builder()
+            .keyValueService(new InMemoryAtlasDbConfig())
+            .backgroundScrubReadThreads(1)
+            .backgroundScrubThreads(1)
+            .collectThreadDumpOnTimestampServiceInit(false)
+            .build();
 }
