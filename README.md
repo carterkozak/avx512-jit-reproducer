@@ -3,9 +3,10 @@
 ### Environment:
 
 Linux x86 64-bit systems with AVX-512 support appear to have regressed after
-https://github.com/openjdk/jdk/pull/9037 merged. This benchmark succeeds on
-older JDK builds. Jdk-20 and jdk-21 GA releases are impacted, but only when
-`UseAVX=3` is set (the default for many modern systems).
+https://github.com/openjdk/jdk/pull/9037 merged, impacting both JDK-20 and
+JDK-21. This benchmark succeeds on older JDK builds. Jdk-20 and jdk-21 GA
+releases are impacted, but only when `UseAVX=3` is set (the default for
+many modern systems).
 
 Explicitly setting `-XX:UseAVX=2` (or lower) leads to successful termination.
 Setting `-XX:+UseKNLSetting` with `-XX:UseAVX=3` also resolves issues,
