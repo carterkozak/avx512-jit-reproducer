@@ -13,46 +13,43 @@ import com.palantir.tritium.metrics.registry.DefaultTaggedMetricRegistry;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 
 import java.util.Objects;
 
-@Measurement(iterations = 3, time = 10)
+@Measurement(iterations = 1, time = 15)
 @Warmup(iterations = 0)
-@Threads(Threads.MAX)
+@Threads(1)
+@State(Scope.Benchmark)
 @Fork(value = 1, jvmArgsAppend = {
-        "-XX:+UnlockDiagnosticVMOptions",
-        // no tiered compilation and relatively low threshold
-        // to tease out failures more quickly/more deterministic.
-        "-XX:-TieredCompilation",
-        "-XX:CompileThreshold=300",
         // Failure only occurs with AVX-512.
+        // This option is not required, however it is often helpful due to
+        // JDK defaults which opt out of AVX-512 for performance reasons
+        // on some platforms.
         "-XX:UseAVX=3",
-        "-XX:CompileCommand=compileonly,net.ckozak.Repro$Value::persistToBytes",
-        "-XX:CompileCommand=inline,com.google.common.primitives.Bytes::concat",
-        "-XX:CompileCommand=inline,com.google.common.primitives.Longs::toByteArray",
-        "-XX:CompileCommand=inline,com.google.protobuf.CodedOutputStream::computeUInt64SizeNoTag",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.encoding.PtBytes::toBytes",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::add",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeSizedBytes",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeVarLong",
-        "-XX:CompileCommand=inline,com.palantir.atlasdb.ptobject.EncodingUtils::encodeVarString",
 })
 // The above line may be updated thusly:
 // }, jvm = "/path/to/jdk-21/bin/java")
 public class Repro {
 
+    @Setup
+    public void setup() {
+        for (int i = 0; i < 100; i++) {
+            runAtlasInit();
+        }
+    }
+
     @Benchmark
     public void attempt() {
-        runAtlasInit();
-        for (int i = 0; i < 10; i++) {
-            Value value = Value.of("name", i);
-            byte[] bytes = value.persistToBytes();
-            Value hydrated = Value.parse(bytes);
-            if (!value.equals(hydrated)) {
-                throw new RuntimeException("Expected " + value + " but found " + hydrated);
-            }
+        Value value = Value.of("name", 0);
+        byte[] bytes = value.persistToBytes();
+        Value hydrated = Value.parse(bytes);
+        if (!value.equals(hydrated)) {
+            throw new RuntimeException("Expected " + value + " but found " + hydrated);
         }
     }
 
